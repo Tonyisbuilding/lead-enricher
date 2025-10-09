@@ -1,0 +1,47 @@
+[
+  {
+    "website": "https://www.fmo-im.nl",
+    "normalized_url": "https://www.fmo-im.nl",
+    "team_pages": [
+      "https://www.fmo-im.nl",
+      "https://www.fmo-im.nl/team",
+      "https://www.fmo-im.nl/teams",
+      "https://www.fmo-im.nl/people",
+      "https://www.fmo-im.nl/leadership",
+      "https://www.fmo-im.nl/our-team",
+      "https://www.fmo-im.nl/company/team",
+      "https://www.fmo-im.nl/about",
+      "https://www.fmo-im.nl/about-us",
+      "https://www.fmo-im.nl/about/team",
+      "https://www.fmo-im.nl/management",
+      "https://www.fmo-im.nl/who-we-are",
+      "https://www.fmo-im.nl/board",
+      "https://www.fmo-im.nl/crew",
+      "https://www.fmo-im.nl/company",
+      "https://www.fmo-im.nl/partners",
+      "https://www.fmo-im.nl/en/cat-abou-fmo-im",
+      "http://www.fmo-im.nl/the-team",
+      "https://www.fmo-im.nl/en/case-study-robust-international",
+      "https://www.fmo-im.nl/en/case-study-banco-promerica",
+      "https://www.fmo-im.nl/en/news-detail/11a14c27-0662-426a-8990-d93b838b3f8b/fmo-annual-report-2024",
+      "https://www.fmo-im.nl/en/hamkorbank-2024",
+      "https://www.fmo-im.nl/en/news-detail/73efc6ab-82a8-4a0a-9a34-d151e79e4456/marjolijn-breeuwer-appointed-as-new-director-clients-investment-solutions-at-fmo-investment-management",
+      "https://www.fmo-im.nl/en/meet-the-team"
+    ],
+    "decision_makers": [
+      {
+        "name": "Marjolijn Breeuwer appointed as new Director Clients",
+        "title": "Marjolijn Breeuwer appointed as new Director Clients & Investment Solutions at FMO Investment Management",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://www.fmo-im.nl/en/",
+        "score": 2.0,
+        "rank_reason": "director"
+      }
+    ],
+    "meta": {
+      "people_examined": 22,
+      "pages_scanned": 24
+    }
+  }
+]
