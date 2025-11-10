@@ -11,9 +11,6 @@ TIMEOUT    = 12
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
-SHEET_ID   = os.environ.get("SHEET_ID")          # required
-TAB_NAME   = os.environ.get("TAB_NAME", "Main")
-
 CREDS_PATH = os.path.expanduser(
     os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "~/sheet-bot-key.json")
 )
@@ -22,6 +19,15 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+# Default sheet wiring (env vars can still override)
+DEFAULT_SHEET_PROFILE = "anthony_directory"
+SHEET_PROFILES = {
+    "anthony_directory": {
+        "sheet_id": "1pwBp7c2ou5007RgMRc_wxQO9J9k9AnTat0_SGunTDdA",
+        "tab_name": "Anthony's Directory",
+    },
+}
 
 # Column headers we use/create
 COL_COMPANY        = "Company"
@@ -37,8 +43,29 @@ def err_exit(msg: str):
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(1)
 
+def resolve_sheet_target() -> tuple[str, str]:
+    env_sheet_id = os.environ.get("SHEET_ID")
+    env_tab_name = os.environ.get("TAB_NAME")
+    profile_name = os.environ.get("SHEET_PROFILE", DEFAULT_SHEET_PROFILE)
+    profile = SHEET_PROFILES.get(profile_name)
+
+    if env_sheet_id:
+        tab = env_tab_name or (profile["tab_name"] if profile else "Main")
+        return env_sheet_id, tab
+
+    if profile:
+        tab = env_tab_name or profile.get("tab_name", "Main")
+        return profile["sheet_id"], tab
+
+    err_exit(
+        "Set SHEET_ID env var or add the sheet to SHEET_PROFILES "
+        f"(unknown sheet profile '{profile_name}')."
+    )
+
+SHEET_ID, TAB_NAME = resolve_sheet_target()
+
 if not SHEET_ID:
-    err_exit("Set SHEET_ID env var to your spreadsheet ID.")
+    err_exit("Set SHEET_ID env var or define a profile in SHEET_PROFILES.")
 if not os.path.exists(CREDS_PATH):
     err_exit(f"Service-account key not found at: {CREDS_PATH}")
 
@@ -386,14 +413,14 @@ if __name__ == "__main__":
                     "https://www.googleapis.com/auth/drive"]
         )
         gc = gspread.authorize(creds)
-        sh = gc.open_by_key(os.environ["SHEET_ID"])
+        sh = gc.open_by_key(SHEET_ID)
 
         meta = get_or_create_meta(sh)
         meta_set_next_row(meta, 2)
         print("🔁 Pointer reset to row 2.")
 
         if args.reset_hard:
-            ws = sh.worksheet(os.environ.get("TAB_NAME", "Main"))
+            ws = sh.worksheet(TAB_NAME)
             headers = [h.strip() for h in ws.row_values(1)]
             hdr = {h.lower(): i+1 for i, h in enumerate(headers)}
 

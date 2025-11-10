@@ -19,7 +19,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Dict, Any
+from typing import Iterable, List, Optional, Dict, Callable, Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
@@ -35,10 +35,10 @@ DEFAULT_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/123.0 Safari/537.36"
 )
-MAX_HTML_LENGTH = 1_800_000  # 1.8 MB safety cap per HTML response
-MAX_SCRIPT_LENGTH = 1_500_000  # Max size for downloaded JS assets
-SCRIPT_SCAN_LIMIT = 5  # Max number of scripts inspected per page
-RATE_LIMIT_BASE = 0.35  # seconds between requests per host (jitter added)
+MAX_HTML_LENGTH = 1_800_000   # 1.8 MB safety cap per HTML response
+MAX_SCRIPT_LENGTH = 1_500_000 # Max size for downloaded JS assets
+SCRIPT_SCAN_LIMIT = 5         # Max number of scripts inspected per page
+RATE_LIMIT_BASE = 0.35        # seconds between requests per host (jitter added)
 
 
 # Candidate discovery
@@ -74,353 +74,17 @@ PEOPLE_CLASS_HINT = re.compile(
 
 
 # Extraction helpers
-NAME_RE = re.compile(
-    r"([A-ZÀ-ÖØ-Ý][\wÀ-ÖØ-öø-ÿ’' -]+(?: [A-ZÀ-ÖØ-Ý][\wÀ-ÖØ-öø-ÿ’' -]+){0,3})"
-)
+EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
+DEOBFUSCATIONS = [
+    (re.compile(r"\s*\[\s*at\s*\]\s*", re.I), "@"),
+    (re.compile(r"\s*\(\s*at\s*\)\s*", re.I), "@"),
+    (re.compile(r"\s+at\s+", re.I), "@"),
+    (re.compile(r"\s*\[\s*dot\s*\]\s*", re.I), "."),
+    (re.compile(r"\s*\(\s*dot\s*\)\s*", re.I), "."),
+    (re.compile(r"\s+dot\s+", re.I), "."),
+]
 
-
-def _extract_people_from_text_blocks(html: str, base_url: str) -> List[PersonCandidate]:
-    """
-    Generic text-block extractor for 'team' pages where people are written as text,
-    not cards. Handles:
-      - 'Name – Title' on one line
-      - Name on line i, Title on line i+1 (Elementor/Gutenberg text blocks)
-      - <p><strong>Name</strong> Title</p>
-      - <li>Name – Title</li>  and  <li>Name\\nTitle</li>
-      - <table><tr><td>Name</td><td>Title</td></tr></table>
-    """
-    soup = BeautifulSoup(html, "html.parser")
-
-    def clean(s: str) -> str:
-        return re.sub(r"\s+", " ", (s or "").strip())
-
-    # Require at least TWO words in a name (avoid 'CEO' as a name)
-    def is_name(s: str) -> bool:
-        s = clean(s)
-        if len(s) < 3 or len(s) > 120 or " " not in s:
-            return False
-        words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ’']+", s)
-        if len(words) < 2 or len(words) > 6:
-            return False
-        return bool(NAME_RE.search(s))
-
-    ROLE_PAT = re.compile(
-        r"\b("
-        # EN
-        r"ceo|coo|cfo|cto|cmo|cro|chief|executive|president|chair|chairman|chairwoman|"
-        r"director|managing director|general partner|partner|principal|head|vp|vice president|"
-        r"officer|advisor|adviser|counsel|manager|"
-        r"investment advisor|portfolio manager|compliance|risk|finance|marketing|sales|"
-        # NL (and a bit of DE/FR common terms that show up)
-        r"directeur|bestuurder|hoofd|famil(?:y|ie) (?:officer|service officer)|"
-        r"client service officer|commercieel|"
-        r"director family office|director real estate|director private equity"
-        r")\b",
-        re.I,
-    )
-
-    def is_role(s: str) -> bool:
-        return bool(ROLE_PAT.search(clean(s)))
-
-    # Obvious non-person headings / location lists that appear on many pages
-    BAD_LINE = re.compile(
-        r"\b("
-        r"our team|ons team|team|bestuur|management|organisatie|wie zijn wij|"
-        r"about|over|contact|privacy|method|methode|maximale|maxim(?:um) retention|app|"
-        r"amsterdam|deventer|goes|heerlen|maastricht|putten|rotterdam|veldhoven|venlo|belgi[eë]"
-        r")\b",
-        re.I,
-    )
-
-    # 1) Find plausible TEAM sections (by heading) and common CMS containers
-    SECTION_HEAD = re.compile(
-        r"\b(team|people|leadership|management|bestuur|board|organisatie)\b", re.I
-    )
-    candidates: List[Tag] = []
-
-    # Headings and the blocks that follow them
-    for h in soup.find_all(["h1", "h2", "h3", "h4"], string=SECTION_HEAD):
-        block = soup.new_tag("div")
-        n = h.next_sibling
-        # capture siblings until next heading same level family
-        while n and not (getattr(n, "name", "") or "").lower() in {
-            "h1",
-            "h2",
-            "h3",
-            "h4",
-        }:
-            if isinstance(n, Tag):
-                block.append(n)
-            n = n.next_sibling
-        if block.contents:
-            candidates.append(block)
-
-    # Common Gutenberg/Elementor text containers (site-agnostic)
-    candidates.extend(
-        soup.select(
-            ".wp-block-group, .wp-block-columns, .wp-block-column, "
-            ".wp-block-paragraph, .wp-block-list, .wp-block-media-text, "
-            ".elementor-widget-text-editor, .elementor-widget-contactteam, .team-section"
-        )
-    )
-
-    # last resort: main content
-    if not candidates:
-        main = soup.find("main") or soup.body
-        if main:
-            candidates = [main]
-
-    found: List[PersonCandidate] = []
-
-    # --------- Extraction strategies ---------
-
-    def add_person(name: str, title: str, source_url: str) -> None:
-        name, title = clean(name), clean(title)[:80]
-        if not (is_name(name) and is_role(title)):
-            return
-        found.append(PersonCandidate(name=name, title=title, source_url=source_url))
-
-    # A) Text-line pairing & inline "Name – Title"
-    def extract_from_textblock(root: Tag) -> None:
-        text = root.get_text("\n", strip=True)
-        lines = [clean(x) for x in text.split("\n") if x.strip()]
-        i = 0
-        while i < len(lines):
-            a = lines[i]
-            if BAD_LINE.search(a):
-                i += 1
-                continue
-
-            # Pattern 1: "Name – Title" (single line)
-            m = re.match(
-                r"(.{3,100}?)\s*(?:–|-|—|,|:)\s*([A-Za-zÀ-ÖØ-öø-ÿ &/'’-]{3,100})$", a
-            )
-            if m:
-                n, t = clean(m.group(1)), clean(m.group(2))
-                add_person(n, t, base_url)
-                i += 1
-                continue
-
-            # Pattern 2: Name on line i, Title on line i+1
-            if is_name(a) and i + 1 < len(lines):
-                b = lines[i + 1]
-                if is_role(b) and not BAD_LINE.search(b):
-                    add_person(a, b, base_url)
-                    i += 2
-                    continue
-
-            i += 1
-
-    # B) <p><strong>Name</strong> Title</p>, <li>Name – Title</li>, <figcaption>, etc.
-    def extract_from_inline_nodes(root: Tag) -> None:
-        for node in root.find_all(["p", "li", "figcaption", "dd"]):
-            txt = clean(node.get_text(" ", strip=True))
-            if not txt or BAD_LINE.search(txt):
-                continue
-            # strong/b name followed by role
-            strong = node.find(["strong", "b"])
-            if strong:
-                n = clean(strong.get_text(" ", strip=True))
-                t = clean(txt.replace(strong.get_text(" ", strip=True), "", 1))
-                if t and n:
-                    add_person(n, t, base_url)
-                    continue
-            # fallback to "Name – Title" inside the node
-            m = re.match(
-                r"(.{3,100}?)\s*(?:–|-|—|,|:)\s*([A-Za-zÀ-ÖØ-öø-ÿ &/'’-]{3,100})$", txt
-            )
-            if m:
-                add_person(m.group(1), m.group(2), base_url)
-                continue
-            # or "Name Title" where the tail looks like a role
-            nm = NAME_RE.search(txt)
-            if nm:
-                after = clean(txt[nm.end() :])
-                if after and is_role(after):
-                    add_person(nm.group(1), after, base_url)
-
-    # C) Simple tables: <tr><td>Name</td><td>Title</td></tr>
-    def extract_from_tables(root: Tag) -> None:
-        for tr in root.find_all("tr"):
-            tds = tr.find_all(["td", "th"])
-            if len(tds) >= 2:
-                n = clean(tds[0].get_text(" ", strip=True))
-                t = clean(tds[1].get_text(" ", strip=True))
-                add_person(n, t, base_url)
-
-    # Run strategies over each candidate once
-    seen_ids: set[int] = set()
-    for c in candidates:
-        if id(c) in seen_ids:
-            continue
-        seen_ids.add(id(c))
-        extract_from_textblock(c)
-        extract_from_inline_nodes(c)
-        extract_from_tables(c)
-
-    # Deduplicate by (name, title), keep longest title
-    dedup: Dict[tuple, PersonCandidate] = {}
-    for p in found:
-        key = (p.name.lower(), p.title.lower())
-        if key not in dedup or len(p.title) > len(dedup[key].title):
-            dedup[key] = p
-
-    return list(dedup.values())
-
-
-# ----------------------- Post-processing sanitizers -----------------------
-
-# Common EN + NL role phrases that may leak into the name or be mistaken for a name
-ROLE_WORDS = {
-    "ceo",
-    "coo",
-    "cfo",
-    "cmo",
-    "cro",
-    "cto",
-    "cpo",
-    "founder",
-    "co-founder",
-    "cofounder",
-    "owner",
-    "president",
-    "chair",
-    "chairman",
-    "chairwoman",
-    "director",
-    "managing director",
-    "general partner",
-    "partner",
-    "principal",
-    "head",
-    "vp",
-    "vice president",
-    "executive",
-    "manager",
-    "advisor",
-    "adviser",
-    "investment advisor",
-    "portfolio manager",
-    "legal counsel",
-    "secretary",
-    "secretary of the board",
-    # NL
-    "directeur",
-    "bestuurder",
-    "hoofd",
-    "commercieel",
-    "familie officer",
-    "family officer",
-    "family service officer",
-    "client service officer",
-    "compliance officer",
-}
-
-# Things we never want as a name
-NON_PERSON_HEADINGS = {
-    "ons team",
-    "bestuur",
-    "organisatie",
-    "wie zijn wij",
-    "cliënt aan het woord",
-}
-
-# Obvious location/city list fragments that sometimes get picked up as a "name"
-CITY_TOKENS = {
-    "amsterdam",
-    "deventer",
-    "goes",
-    "heerlen",
-    "maastricht",
-    "putten",
-    "rotterdam",
-    "veldhoven",
-    "venlo",
-    "belgië",
-    "belgie",
-    "belgi",
-}
-
-
-def _is_role_like(text: str) -> bool:
-    t = (text or "").strip().lower()
-    if not t or len(t) > 80:
-        return False
-    # allow short role tokens like CEO/CCO
-    return any(re.search(rf"\b{re.escape(w)}\b", t) for w in ROLE_WORDS)
-
-
-def _is_non_person_heading(text: str) -> bool:
-    t = (text or "").strip().lower()
-    return t in NON_PERSON_HEADINGS or any(tok in t for tok in CITY_TOKENS)
-
-
-def _split_name_role_if_mixed(raw_name: str) -> tuple[str, str]:
-    """
-    If 'name' looks like 'Firstname Lastname CEO' or 'Firstname Lastname – Director',
-    split and return (name, role). Otherwise (raw_name, '').
-    """
-    if not raw_name:
-        return "", ""
-    txt = re.sub(r"[\u2013\u2014\-–—|•·]+", " ", raw_name).strip()
-    # Try last token(s) being a role
-    parts = re.split(r"\s{2,}|\s\|\s|,\s+|  +", txt)
-    # Also try a simple last-segment split
-    candidates = [txt] + parts
-    for cand in candidates:
-        m = re.match(
-            r"(.{3,100}?)\s+(?:–|-|—|\||:)?\s*([A-Za-zÀ-ÖØ-öø-ÿ &/]+)$", cand.strip()
-        )
-        if m:
-            n, r = m.group(1).strip(), m.group(2).strip()
-            if is_name_like(n) and _is_role_like(r):
-                return n, r
-    # Fallback: if the whole thing ends with a known short role token (CEO/COO/CCO)
-    m2 = re.match(r"(.{3,100}?)\s+(C[EO]{1,2}O?|CFO|CMO|CTO|CPO)\b", txt, flags=re.I)
-    if m2:
-        n, r = m2.group(1).strip(), m2.group(2).strip()
-        if is_name_like(n):
-            return n, r
-    return raw_name, ""
-
-
-def _clean_title(title: str) -> str:
-    t = (title or "").strip()
-    t = re.sub(r"\s+", " ", t)
-    # Titles shouldn’t be paragraphs
-    return t[:80].strip()
-
-
-def _clean_name(name: str) -> str:
-    n = (name or "").strip()
-    n = re.sub(r"\s+", " ", n)
-    # Remove leading headings like "Ons Team" etc
-    if _is_non_person_heading(n):
-        return ""
-    # Reject pure role in name
-    if _is_role_like(n):
-        return ""
-    # Require it to look like a person’s name
-    if not is_name_like(n):
-        return ""
-    return n
-
-
-def _sanitize_person_fields(name: str, title: str) -> tuple[str, str]:
-    """Return (name, title) cleaned/split or ('','') if invalid."""
-    # If name bundles a role, split
-    n, r = _split_name_role_if_mixed(name)
-    if r and not title:
-        title = r
-    n = _clean_name(n)
-    title = _clean_title(title)
-    # Final guards
-    if not n:
-        return "", ""
-    # If the "title" is actually a city list / heading, drop it
-    if _is_non_person_heading(title):
-        title = ""
-    return n, title
+NAME_RE = re.compile(r"([A-ZÀ-ÖØ-Ý][\wÀ-ÖØ-öø-ÿ’' -]+(?: [A-ZÀ-ÖØ-Ý][\wÀ-ÖØ-öø-ÿ’' -]+){0,3})")
 
 
 # Decision maker scoring
@@ -429,10 +93,9 @@ DECISION_KEYWORDS = {
     "chief executive": 10,
     "chief executive officer": 10,
     "founder": 8,
+        "partner": 6,
     "co-founder": 7,
     "cofounder": 7,
-    "founding partner": 7,
-    "partner": 6,
     "chairman": 7,
     "chairwoman": 7,
     "chair": 5,
@@ -465,35 +128,13 @@ DECISION_KEYWORDS = {
     "head of commercial": 4,
     "board director": 4,
     "director": 10,  # broad but useful as tie-breaker
-    "oprichter": 8,  # Dutch: founder
-    "mede-oprichter": 7,  # Dutch: co-founder
+        "founding partner": 7,
+          "oprichter": 8,         # Dutch: founder
+    "mede-oprichter": 7,    # Dutch: co-founder
     "directeur": 7,
 }
 
-PRIORITY_KEYWORDS = [
-    "ceo",
-    "chief executive",
-    "chief executive officer",
-    "founder",
-    "co-founder",
-    "cofounder",
-    "founding partner",
-    "partner",
-    "president",
-    "owner",
-    "managing director",
-    "managing partner",
-    "general partner",
-    "director",
-    "oprichter",
-    "mede-oprichter",
-    "directeur",
-]
-
 LINKEDIN_HINT = re.compile(r"linkedin\.com", re.I)
-LINKEDIN_URL_RE = re.compile(
-    r"https?://(?:[\w.-]+\.)?linkedin\.com/[\w%/?=&#.-]+", re.I
-)
 
 
 def keyword_in_text(text: str, keyword: str) -> bool:
@@ -502,11 +143,7 @@ def keyword_in_text(text: str, keyword: str) -> bool:
     # Normalize spaces/hyphens/ampersands in the keyword into a flexible pattern
     # so "co-founder", "co founder", "co-founder" all match.
     k = keyword.strip()
-    k_simple = re.sub(
-        r"[\s\u00A0\u2011\u2012\u2013\u2014\u2212\-&]+",
-        r"[\\s\\u00A0\\u2011\\u2012\\u2013\\u2014\\u2212\\-&]+",
-        re.escape(k),
-    )
+    k_simple = re.sub(r"[\s\u00A0\u2011\u2012\u2013\u2014\u2212\-&]+", r"[\\s\\u00A0\\u2011\\u2012\\u2013\\u2014\\u2212\\-&]+", re.escape(k))
 
     # If the keyword is alphabetic (ignoring separators), enforce word boundaries
     alpha = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ]", "", keyword)
@@ -517,58 +154,6 @@ def keyword_in_text(text: str, keyword: str) -> bool:
         pattern = k_simple
 
     return bool(re.search(pattern, text, flags=re.I))
-
-
-ROLE_LIKE_KEYWORDS = [
-    "manager",
-    "director",
-    "officer",
-    "lead",
-    "leader",
-    "partner",
-    "founder",
-    "president",
-    "principal",
-    "head",
-    "chair",
-    "owner",
-    "executive",
-    "consultant",
-    "advisor",
-]
-
-NON_PERSON_HEADINGS = {
-    "about",
-    "contact",
-    "services",
-    "service",
-    "news",
-    "blog",
-    "events",
-    "careers",
-    "vacatures",
-    "articles",
-    "press",
-}
-
-
-def _clean_title(title: str) -> str:
-    if not title:
-        return ""
-    title = re.sub(r"\s+", " ", title.strip())
-    title = re.sub(r"^[\-–—•:]+\s*", "", title)
-    title = re.sub(r"\s*[\-–—•:]+$", "", title)
-    return title.strip()
-
-
-def _is_role_like(title: str) -> bool:
-    tl = title.lower()
-    return any(keyword in tl for keyword in ROLE_LIKE_KEYWORDS)
-
-
-def _is_non_person_heading(title: str) -> bool:
-    tl = title.lower()
-    return tl in NON_PERSON_HEADINGS
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +170,7 @@ class PersonCandidate:
     rank_reason: str = ""
 
     def is_reasonable(self) -> bool:
-        return bool(self.name or self.title or self.linkedin)
+        return bool(self.name or self.title or self.linkedin or self.email)
 
     def key(self) -> tuple[str, str, str, str]:
         return (
@@ -630,6 +215,16 @@ class SiteScanResult:
 # ---------------------------------------------------------------------------
 # Utility functions
 # ---------------------------------------------------------------------------
+def clean_email(value: str) -> str:
+    if not value:
+        return ""
+    text = value
+    for pattern, replacement in DEOBFUSCATIONS:
+        text = pattern.sub(replacement, text)
+    match = EMAIL_RE.search(text)
+    return match.group(0) if match else ""
+
+
 def normalize_url(url: str) -> str:
     if not url:
         return ""
@@ -652,17 +247,9 @@ def is_name_like(value: str) -> bool:
     if not value:
         return False
     value = value.strip()
-    if len(value) < 3 or len(value) > 120:
+    if len(value) < 2 or len(value) > 120:
         return False
-    # Must contain at least one space (Firstname Lastname) to avoid roles/headings
-    if " " not in value:
-        return False
-    # Reject if it contains obvious city-list commas or too many words (>6 usually noise)
-    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ’']+", value)
-    if len(words) < 2 or len(words) > 6:
-        return False
-    # Keep your original NAME_RE check
-    return bool(NAME_RE.search(value))
+    return bool(NAME_RE.fullmatch(value))
 
 
 def jitter_delay(base: float) -> float:
@@ -742,15 +329,11 @@ class PeopleEnricher:
             self.logger.debug("Non-HTML content at %s: %s", url, content_type)
             return None
         if len(resp.content) > MAX_HTML_LENGTH:
-            self.logger.debug(
-                "Response at %s too large (%d bytes)", url, len(resp.content)
-            )
+            self.logger.debug("Response at %s too large (%d bytes)", url, len(resp.content))
             return None
         return resp
 
-    def _fetch_text_resource(
-        self, url: str, max_length: int = MAX_SCRIPT_LENGTH
-    ) -> Optional[str]:
+    def _fetch_text_resource(self, url: str, max_length: int = MAX_SCRIPT_LENGTH) -> Optional[str]:
         cached = self._resource_cache.get(url)
         if cached is not None:
             return cached or None
@@ -776,17 +359,13 @@ class PeopleEnricher:
             return None
 
         if len(resp.content) > max_length:
-            self.logger.debug(
-                "Script at %s too large (%d bytes)", url, len(resp.content)
-            )
+            self.logger.debug("Script at %s too large (%d bytes)", url, len(resp.content))
             self._resource_cache[url] = ""
             return None
 
         content_type = resp.headers.get("Content-Type", "").lower()
         if not any(token in content_type for token in ("javascript", "text", "json")):
-            self.logger.debug(
-                "Ignoring non-text script content at %s (%s)", url, content_type
-            )
+            self.logger.debug("Ignoring non-text script content at %s (%s)", url, content_type)
             self._resource_cache[url] = ""
             return None
 
@@ -836,17 +415,16 @@ class PeopleEnricher:
             if brace_end == -1:
                 brace_end = min(len(script_text), match.end() + 400)
 
-            chunk = script_text[
-                max(0, match.start() - 50) : min(len(script_text), brace_end + 1)
-            ]
+            chunk = script_text[max(0, match.start() - 50) : min(len(script_text), brace_end + 1)]
 
             title = self._find_script_field(chunk, ("position", "title", "role"))
-            linkedin_raw = self._find_script_field(
-                chunk, ("linkedin", "linkedinUrl", "profile")
-            )
+            linkedin_raw = self._find_script_field(chunk, ("linkedin", "linkedinUrl", "profile"))
+            email_raw = self._find_script_field(chunk, ("email", "mail"))
 
             linkedin = self._normalize_linkedin(urljoin(base_url, linkedin_raw))
-            if not (title or linkedin):
+            email = clean_email(email_raw)
+
+            if not (title or linkedin or email):
                 continue
 
             people.append(
@@ -854,15 +432,14 @@ class PeopleEnricher:
                     name=name,
                     title=title,
                     linkedin=linkedin,
+                    email=email,
                     source_url=source_url,
                 )
             )
 
         return people
 
-    def _extract_people_from_scripts(
-        self, soup: BeautifulSoup, base_url: str
-    ) -> List[PersonCandidate]:
+    def _extract_people_from_scripts(self, soup: BeautifulSoup, base_url: str) -> List[PersonCandidate]:
         base_host = urlsplit(base_url).netloc.lower()
         script_texts: List[tuple[str, str]] = []  # (text, source_url)
 
@@ -882,11 +459,7 @@ class PeopleEnricher:
             else:
                 inline = script.string or script.get_text()
                 if inline:
-                    snippet = (
-                        inline
-                        if len(inline) <= MAX_SCRIPT_LENGTH
-                        else inline[:MAX_SCRIPT_LENGTH]
-                    )
+                    snippet = inline if len(inline) <= MAX_SCRIPT_LENGTH else inline[: MAX_SCRIPT_LENGTH]
                     script_texts.append((snippet, base_url))
 
             if len(script_texts) >= SCRIPT_SCAN_LIMIT:
@@ -898,7 +471,7 @@ class PeopleEnricher:
         return people
 
     # --------------------- Candidate discovery ----------------------
-    # --------------------- Candidate discovery ----------------------
+  # --------------------- Candidate discovery ----------------------
     def discover_team_pages(self, base_url: str) -> List[str]:
         parts = urlsplit(base_url)
         root = f"{parts.scheme}://{parts.netloc}"
@@ -942,8 +515,10 @@ class PeopleEnricher:
                 if len(cleaned) >= self.max_pages:
                     break
         return cleaned
+    
 
         # ----------------------- New logic -----------------------
+
 
     # ----------------------- Extraction logic -----------------------
     def _extract_people_from_html(
@@ -956,17 +531,12 @@ class PeopleEnricher:
             soup = BeautifulSoup(html_text, "html.parser")
         people: List[PersonCandidate] = []
 
-        people.extend(_extract_people_from_text_blocks(html_text, base_url))
-
-        def add_person(name: str, title: str, linkedin: str, email: str = "") -> None:
-            name, title = _sanitize_person_fields(name, title)
-            if not name:  # invalid after cleaning
-                return
+        def add_person(name: str, title: str, linkedin: str, email: str) -> None:
             candidate = PersonCandidate(
-                name=name,
-                title=title,
+                name=name.strip(),
+                title=title.strip(),
                 linkedin=self._normalize_linkedin(linkedin),
-                email=(email or "").strip(),
+                email=clean_email(email),
                 source_url=base_url,
             )
             if candidate.is_reasonable():
@@ -977,11 +547,7 @@ class PeopleEnricher:
             if not isinstance(block, Tag):
                 continue
             class_id_blob = " ".join(
-                [
-                    " ".join(block.get("class", []) or []),
-                    block.get("id") or "",
-                    block.name or "",
-                ]
+                [" ".join(block.get("class", []) or []), block.get("id") or "", block.name or ""]
             )
             if not PEOPLE_CLASS_HINT.search(class_id_blob):
                 continue
@@ -991,12 +557,11 @@ class PeopleEnricher:
             name = self._extract_name_from_block(block, text)
             title = self._extract_title_from_block(block, text, name)
             linkedin = self._extract_linkedin(block, base_url)
-            add_person(name, title, linkedin)
+            email = self._extract_email(block, text)
+            add_person(name, title, linkedin, email)
 
         # 2) JSON-LD Person
-        for node in soup.find_all(
-            "script", type=lambda t: t and "ld+json" in t.lower()
-        ):
+        for node in soup.find_all("script", type=lambda t: t and "ld+json" in t.lower()):
             script_text = node.string or node.get_text()
             if not script_text:
                 continue
@@ -1010,6 +575,7 @@ class PeopleEnricher:
                     if (v.get("@type") or "").lower() == "person":
                         name = str(v.get("name") or "").strip()
                         title = str(v.get("jobTitle") or "").strip()
+                        email = str(v.get("email") or "").strip()
                         same_as = v.get("sameAs") or []
                         linkedin = ""
                         if isinstance(same_as, str):
@@ -1018,7 +584,7 @@ class PeopleEnricher:
                             linkedin = self._normalize_linkedin(str(entry))
                             if linkedin:
                                 break
-                        add_person(name, title, linkedin)
+                        add_person(name, title, linkedin, email)
                     for nv in v.values():
                         walk(nv)
                 elif isinstance(v, list):
@@ -1044,11 +610,23 @@ class PeopleEnricher:
                 linkedin = self._normalize_linkedin(urljoin(base_url, a["href"]))
                 if linkedin:
                     break
-            add_person(name, title, linkedin)
+            email = ""
+            mail = tag.find("a", href=re.compile("^mailto:", re.I))
+            if mail and mail.get("href"):
+                email = clean_email(mail["href"][7:])
+            if not email:
+                email = clean_email(tag.get_text(" ", strip=True))
+            add_person(name, title, linkedin, email)
 
         # 4) Generic anchors: emails + LinkedIn (nearby title inference)
         for anchor in soup.find_all("a", href=True):
             href = anchor["href"]
+            if href.lower().startswith("mailto:"):
+                name = anchor.get_text(" ", strip=True)
+                email = clean_email(href[7:])
+                if email:
+                    add_person(name, "", "", email)
+                continue
             if LINKEDIN_HINT.search(href):
                 blk = anchor
                 for _ in range(3):
@@ -1062,19 +640,7 @@ class PeopleEnricher:
                         break
                 name = anchor.get_text(" ", strip=True)
                 if not is_name_like(name):
-                    for sel in [
-                        "h1",
-                        "h2",
-                        "h3",
-                        "h4",
-                        "strong",
-                        "b",
-                        ".name",
-                        ".person-name",
-                        ".member-name",
-                        ".team__name",
-                        ".profile-name",
-                    ]:
+                    for sel in ["h1","h2","h3","h4","strong","b",".name",".person-name",".member-name",".team__name",".profile-name"]:
                         t = blk.select_one(sel)
                         if t:
                             cand = t.get_text(" ", strip=True)
@@ -1089,12 +655,12 @@ class PeopleEnricher:
                     if m:
                         title = m.group(1)
                 if not title:
-                    ttag = blk.find(["em", "small", "span", "p"])
+                    ttag = blk.find(["em","small","span","p"])
                     if ttag:
                         cand = ttag.get_text(" ", strip=True)
                         if 3 <= len(cand) <= 120:
                             title = cand
-                add_person(name, title, urljoin(base_url, href))
+                add_person(name, title, urljoin(base_url, href), "")
 
         # 5) Headings near role keywords
         for heading in soup.find_all(["h1", "h2", "h3", "h4"]):
@@ -1111,24 +677,14 @@ class PeopleEnricher:
                 m = NAME_RE.search(block_text)
                 name = m.group(1) if m else ""
                 linkedin = ""
-                li = heading.find("a", href=LINKEDIN_HINT) or (
-                    sibling and sibling.find("a", href=LINKEDIN_HINT)
-                )
+                li = heading.find("a", href=LINKEDIN_HINT) or (sibling and sibling.find("a", href=LINKEDIN_HINT))
                 if li:
                     linkedin = urljoin(base_url, li.get("href", ""))
-                add_person(name, heading_text, linkedin)
+                email = clean_email(block_text)
+                add_person(name, heading_text, linkedin, email)
 
         # 6) JS bundles
         people.extend(self._extract_people_from_scripts(soup, base_url))
-
-        filtered: List[PersonCandidate] = []
-        for p in people:
-            if not p.name or _is_role_like(p.name) or _is_non_person_heading(p.name):
-                continue
-            if _is_non_person_heading(p.title):
-                p.title = ""
-            filtered.append(p)
-        people = filtered
 
         # Dedup
         unique: Dict[tuple[str, str, str, str], PersonCandidate] = {}
@@ -1142,9 +698,18 @@ class PeopleEnricher:
                     e.title = p.title
                 if not e.linkedin and p.linkedin:
                     e.linkedin = p.linkedin
+                if not e.email and p.email:
+                    e.email = p.email
             else:
                 unique[key] = p
         return list(unique.values())
+
+    
+
+
+
+
+    
 
     def _extract_name_from_block(self, block: Tag, text: str) -> str:
         selectors = [
@@ -1170,81 +735,34 @@ class PeopleEnricher:
         return match.group(1) if match and is_name_like(match.group(1)) else ""
 
     def _extract_title_from_block(self, block: Tag, text: str, name: str) -> str:
-        # Prefer nearby obvious role containers
-        for sel in [
-            ".role",
-            ".title",
-            ".position",
-            ".function",
-            ".functie",
-            "em",
-            "small",
-        ]:
-            t = block.select_one(sel)
-            if t:
-                cand = _clean_title(t.get_text(" ", strip=True))
-                if 3 <= len(cand) <= 80 and _is_role_like(cand) or len(cand) <= 50:
-                    return cand
-
-        # Try immediate siblings around where the name was found
+        name = name or ""
+        title = ""
         if name and name in text:
-            after = text[text.find(name) + len(name) :][:160]
-            m = re.search(r"([A-Z][A-Za-zÀ-ÖØ-öø-ÿ0-9&.,’' \-/]{3,80})", after)
-            if m:
-                cand = _clean_title(m.group(1))
-                if cand and not _is_non_person_heading(cand):
-                    return cand
-
-        # Shallow lookups to avoid paragraphs
-        ttag = block.find(["span", "p"])
-        if ttag:
-            cand = _clean_title(ttag.get_text(" ", strip=True))
-            if 3 <= len(cand) <= 80 and not _is_non_person_heading(cand):
-                return cand
-        return ""
+            after_name = text[text.find(name) + len(name) :]
+            match = re.search(r"([A-Z][A-Za-z0-9&.,’' \-/]{3,100})", after_name.strip())
+            if match:
+                title = match.group(1)
+        if not title:
+            fallback = block.find(["em", "small", "p", "span"])
+            if fallback:
+                candidate = fallback.get_text(" ", strip=True)
+                if 3 <= len(candidate) <= 120:
+                    title = candidate
+        return title
 
     def _extract_linkedin(self, block: Tag, base_url: str) -> str:
         for anchor in block.find_all("a", href=True):
             href = anchor["href"]
             if LINKEDIN_HINT.search(href):
-                normalized = self._normalize_linkedin(urljoin(base_url, href))
-                if normalized:
-                    return normalized
-
-        def extract_from_value(value: Any) -> str:
-            if isinstance(value, str):
-                match = LINKEDIN_URL_RE.search(value)
-                if match:
-                    return self._normalize_linkedin(match.group(0))
-                lowered = value.lower()
-                if "linkedin" in lowered:
-                    if lowered.startswith("/in/") or lowered.startswith("in/"):
-                        candidate = "https://www.linkedin.com" + (
-                            value if value.startswith("/") else "/" + value
-                        )
-                        return self._normalize_linkedin(candidate)
-                    if "linkedin.com" in lowered:
-                        return self._normalize_linkedin(value)
-            elif isinstance(value, (list, tuple)):
-                for item in value:
-                    link = extract_from_value(item)
-                    if link:
-                        return link
-            return ""
-
-        for element in block.descendants:
-            if isinstance(element, Tag):
-                for attr_value in element.attrs.values():
-                    link = extract_from_value(attr_value)
-                    if link:
-                        return link
-
-                # Check text content that might be JSON encoded
-                if element.string:
-                    link = extract_from_value(element.string)
-                    if link:
-                        return link
+                return self._normalize_linkedin(urljoin(base_url, href))
         return ""
+
+    def _extract_email(self, block: Tag, text_blob: str) -> str:
+        for anchor in block.find_all("a", href=True):
+            href = anchor["href"]
+            if href.lower().startswith("mailto:"):
+                return clean_email(href[7:])
+        return clean_email(text_blob)
 
     def _normalize_linkedin(self, url: str) -> str:
         if not url:
@@ -1280,26 +798,20 @@ class PeopleEnricher:
             score += 1
         if person.linkedin:
             score += 1.5
+        if person.email:
+            score += 1.5
 
         # Page-context bump for team/about-like URLs
         try:
             path = urlsplit(person.source_url).path.lower()
-            if any(
-                k in path
-                for k in (
-                    "team",
-                    "people",
-                    "about",
-                    "over-ons",
-                    "leadership",
-                    "management",
-                )
-            ):
+            if any(k in path for k in ("team", "people", "about", "over-ons", "leadership", "management")):
                 score += 0.5
         except Exception:
             pass
 
         reason_parts = []
+        if person.email:
+            reason_parts.append("email")
         if person.linkedin:
             reason_parts.append("linkedin")
         keywords_hit = [k for k in DECISION_KEYWORDS if keyword_in_text(title_lower, k)]
@@ -1314,34 +826,18 @@ class PeopleEnricher:
         scored = [self._score_person(dataclasses.replace(p)) for p in people]
         scored.sort(key=lambda p: p.score, reverse=True)
 
-        selected: List[PersonCandidate] = []
-        selected_keys: set[tuple[str, str, str]] = set()
-
-        def add_selected(person: PersonCandidate) -> None:
-            key = (person.name.lower(), person.title.lower(), person.linkedin.lower())
-            if key not in selected_keys:
-                selected.append(person)
-                selected_keys.add(key)
-
+        selected = []
         for person in scored:
             if len(selected) >= self.decision_limit:
                 break
             # lowered threshold 3.5 -> 3.0; keep first decent fallback at 1.5
             if person.score >= 3.0 or (not selected and person.score >= 1.5):
-                add_selected(person)
+                selected.append(person)
 
         if not selected and scored:
             fallback = scored[0]
             fallback.rank_reason = (fallback.rank_reason + ", fallback").strip(", ")
-            add_selected(fallback)
-
-        # Always include priority titles even if they did not meet score thresholds
-        for original in people:
-            title_lower = (original.title or "").lower()
-            if any(keyword_in_text(title_lower, kw) for kw in PRIORITY_KEYWORDS):
-                priority_person = self._score_person(dataclasses.replace(original))
-                add_selected(priority_person)
-
+            selected.append(fallback)
         return selected
 
     # ------------------------- Public API ---------------------------
@@ -1404,6 +900,11 @@ class PeopleEnricher:
         result.meta["people_examined"] = len(unique_people)
         result.meta["pages_scanned"] = searched_pages
         return result
+
+
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1543,9 +1044,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     websites = load_websites(args.input_file, args.url)
     if not websites:
-        logging.error(
-            "No websites provided. Use --url or --input-file, or pipe URLs via stdin."
-        )
+        logging.error("No websites provided. Use --url or --input-file, or pipe URLs via stdin.")
         return 1
 
     enricher = PeopleEnricher(

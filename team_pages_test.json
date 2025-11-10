@@ -1,0 +1,222 @@
+[
+  {
+    "website": "https://edge-capital.nl/management",
+    "normalized_url": "https://edge-capital.nl/management",
+    "team_pages": [
+      "https://edge-capital.nl",
+      "https://edge-capital.nl/team",
+      "https://edge-capital.nl/teams",
+      "https://edge-capital.nl/people",
+      "https://edge-capital.nl/leadership",
+      "https://edge-capital.nl/our-team",
+      "https://edge-capital.nl/company/team",
+      "https://edge-capital.nl/about",
+      "https://edge-capital.nl/about-us",
+      "https://edge-capital.nl/about/team",
+      "https://edge-capital.nl/management",
+      "https://edge-capital.nl/who-we-are",
+      "https://edge-capital.nl/board",
+      "https://edge-capital.nl/crew",
+      "https://edge-capital.nl/company",
+      "https://edge-capital.nl/partners",
+      "https://edge-capital.nl/over-ons"
+    ],
+    "decision_makers": [
+      {
+        "name": "Paul Lamain",
+        "title": "Founder and board of directors",
+        "linkedin": "https://www.linkedin.com/in/paul-lamain-72a079135",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 9.5,
+        "rank_reason": "linkedin, founder"
+      },
+      {
+        "name": "Paul Lamain",
+        "title": "Oprichter en raad van bestuur",
+        "linkedin": "https://www.linkedin.com/in/paul-lamain-72a079135",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 9.5,
+        "rank_reason": "linkedin, oprichter"
+      },
+      {
+        "name": "Henk van der Heijden",
+        "title": "Advisor and chairman of the trust bonds foundation Edge Capital",
+        "linkedin": "https://www.linkedin.com/in/mvandrunen",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 8.5,
+        "rank_reason": "linkedin, chairman"
+      },
+      {
+        "name": "Teagan de Groot",
+        "title": "Partner and board of directors",
+        "linkedin": "https://www.linkedin.com/in/teagan-de-groot-9b512616a",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 7.5,
+        "rank_reason": "linkedin, partner"
+      },
+      {
+        "name": "Teagan de Groot",
+        "title": "Partner en raad van bestuur",
+        "linkedin": "https://www.linkedin.com/in/teagan-de-groot-9b512616a",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 7.5,
+        "rank_reason": "linkedin, partner"
+      },
+      {
+        "name": "Aron Broeken",
+        "title": "Algemeen directeur EdgeNext",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 7.0,
+        "rank_reason": "directeur"
+      }
+    ],
+    "people": [
+      {
+        "name": "Paul Lamain",
+        "title": "Founder and board of directors",
+        "linkedin": "https://www.linkedin.com/in/paul-lamain-72a079135",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 9.5,
+        "rank_reason": "linkedin, founder"
+      },
+      {
+        "name": "Paul Lamain",
+        "title": "Oprichter en raad van bestuur",
+        "linkedin": "https://www.linkedin.com/in/paul-lamain-72a079135",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 9.5,
+        "rank_reason": "linkedin, oprichter"
+      },
+      {
+        "name": "Henk van der Heijden",
+        "title": "Advisor and chairman of the trust bonds foundation Edge Capital",
+        "linkedin": "https://www.linkedin.com/in/mvandrunen",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 8.5,
+        "rank_reason": "linkedin, chairman"
+      },
+      {
+        "name": "Teagan de Groot",
+        "title": "Partner and board of directors",
+        "linkedin": "https://www.linkedin.com/in/teagan-de-groot-9b512616a",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 7.5,
+        "rank_reason": "linkedin, partner"
+      },
+      {
+        "name": "Teagan de Groot",
+        "title": "Partner en raad van bestuur",
+        "linkedin": "https://www.linkedin.com/in/teagan-de-groot-9b512616a",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 7.5,
+        "rank_reason": "linkedin, partner"
+      },
+      {
+        "name": "Aron Broeken",
+        "title": "Algemeen directeur EdgeNext",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 7.0,
+        "rank_reason": "directeur"
+      },
+      {
+        "name": "Henk van der Heijden",
+        "title": "Adviseur en voorzitter van de trust bonds stichting Edge Capital",
+        "linkedin": "https://www.linkedin.com/in/mvandrunen",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 1.5,
+        "rank_reason": "linkedin"
+      },
+      {
+        "name": "Brahim Bouzerrade",
+        "title": "Business development manager",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 0.0,
+        "rank_reason": ""
+      },
+      {
+        "name": "Brahim Bouzerrade",
+        "title": "Manager business development",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 0.0,
+        "rank_reason": ""
+      },
+      {
+        "name": "Aron Broeken",
+        "title": "General manager EdgeNext",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 0.0,
+        "rank_reason": ""
+      },
+      {
+        "name": "Pepijn van den Hurk",
+        "title": "Head of finance and technology EdgeNext",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 0.0,
+        "rank_reason": ""
+      },
+      {
+        "name": "Tom Meulemans",
+        "title": "Head of relationships and sales EdgeNext",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 0.0,
+        "rank_reason": ""
+      },
+      {
+        "name": "Bernard Beerding",
+        "title": "Manager business development",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 0.0,
+        "rank_reason": ""
+      },
+      {
+        "name": "Pepijn van den Hurk",
+        "title": "Hoofd financiÃÂ«n en technologie EdgeNext",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 0.0,
+        "rank_reason": ""
+      },
+      {
+        "name": "Tom Meulemans",
+        "title": "Hoofd relaties en sales EdgeNext",
+        "linkedin": "",
+        "email": "",
+        "source_url": "https://edge-capital.nl/assets/index-CB1yjQ9g.js",
+        "score": 0.0,
+        "rank_reason": ""
+      }
+    ],
+    "meta": {
+      "people_examined": 15,
+      "pages_scanned": 17
+    }
+  }
+]
