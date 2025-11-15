@@ -29,19 +29,20 @@ SCOPES = [
 DEFAULT_SHEET_PROFILE = "anthony_directory"
 SHEET_PROFILES = {
     "anthony_directory": {
-        "sheet_id": "1pwBp7c2ou5007RgMRc_wxQO9J9k9AnTat0_SGunTDdA",
-        "tab_name": "Main",
+        "sheet_id": "1KrKoeun-h6eEzSK6-cc4_MUHriuabg8GyAR9b8NR7fc",
+        "tab_name": "Validated_leads",
     },
 }
 
 # Column headers we use/create
-COL_COMPANY        = "Company"
-COL_LINKEDIN       = "LinkedIn"
-COL_STATUS         = "LinkedIn status"
+COL_COMPANY        = "name"
+COL_LINKEDIN       = "LinkedIn"  # leave unchanged – these will be auto-added
+COL_STATUS         = "Website Status"  # this is already present
 COL_LAST_CHECKED   = "Last checked"
 COL_EMP_COUNT      = "LinkedIn employees"
 COL_EMP_LINK       = "LinkedIn people link"
 COL_COMPANY_ID     = "LinkedIn company ID"
+
 
 STATUS_FOUND = "FOUND"
 STATUS_NONE  = "NONE"
@@ -438,8 +439,8 @@ def main():
                 if idx: return idx
             return None
 
-        col_company    = col_index(COL_COMPANY, "Name", "Company Name")
-        col_website    = col_index("Company's website", "Website", "Site", "URL")
+        col_company    = col_index(COL_COMPANY)
+        col_website    = col_index("website")
         col_linkedin   = col_index(COL_LINKEDIN, "Find LinkedIn", "Company LinkedIn")
         col_status     = col_index(COL_STATUS)
         col_checked    = col_index(COL_LAST_CHECKED)
@@ -448,9 +449,9 @@ def main():
         col_company_id = col_index(COL_COMPANY_ID)
 
         if not col_website:
-            err_exit("Could not find a website column.")
+            err_exit("Could not find the 'website' column.")
         if not col_company:
-            err_exit("Could not find a Company column.")
+            err_exit("Could not find the 'name' column.")
 
         # Ensure LinkedIn/Status/Checked columns exist
         need_updates = []

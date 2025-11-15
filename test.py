@@ -1,31 +1,29 @@
-from playwright.sync_api import sync_playwright
-import re, urllib.parse
+import requests
+from bs4 import BeautifulSoup
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page()
+# Category 1 Keywords (adjust as needed)
+KEYWORDS = ["capital", "fund", "asset", "wealth", "investment", "partners", "equity"]
 
-    url = "https://www.linkedin.com/company/groupe-atland/"
-    page.goto(url)
-    page.wait_for_selector("a:has-text('employees')")
+# Sample list (replace with actual rows from Gamma)
+gamma_websites = [
+    "http://www.hollandcapital.nl/",
+    "https://www.morganstanley.com/about-us/global-offices/netherlands",
+    "http://www.ffadministraties.nl/",
+    "https://iqeq.com/nl/",
+    "http://www.waterland.co.nl/",
+]
 
-    # Get the visible text
-    employee_text = page.locator("a:has-text('employees')").first.inner_text()
+def keyword_check(url):
+    try:
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.text, "html.parser")
+        text = soup.get_text(separator=' ', strip=True).lower()
+        found = [kw for kw in KEYWORDS if kw.lower() in text]
+        return found
+    except Exception as e:
+        return f"❌ Error: {e}"
 
-    # Get the href link (redirects to signup)
-    employee_link = page.locator("a:has-text('employees')").first.get_attribute("href")
-
-    # Decode the redirect URL
-    decoded_url = urllib.parse.unquote(employee_link or "")
-
-    # Extract company ID from inside the redirect
-    id_match = re.search(r'facetCurrentCompany=%5B(\d+)%5D', decoded_url) or \
-               re.search(r'facetCurrentCompany=\[(\d+)\]', decoded_url)
-
-    company_id = id_match.group(1) if id_match else "Not Found"
-
-    print(f"✅ Employee Info: {employee_text}")
-    print(f"🔗 Link to people: {employee_link}")
-    print(f"🏷️  Company ID: {company_id}")
-
-    browser.close()
+# Run test
+for site in gamma_websites:
+    result = keyword_check(site)
+    print(f"{site}\n→ Found: {result}\n")

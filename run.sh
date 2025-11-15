@@ -8,8 +8,8 @@ LOG_DIR="$PROJECT_DIR"
 LOCK_FILE="$PROJECT_DIR/.enrich.lock"
 
 export GOOGLE_APPLICATION_CREDENTIALS="$HOME/sheet-bot-key.json"
-export SHEET_ID="1pwBp7c2ou5007RgMRc_wxQO9J9k9AnTat0_SGunTDdA"
-export TAB_NAME="Anthony's Directory"   # or "Main"
+export SHEET_ID="1KrKoeun-h6eEzSK6-cc4_MUHriuabg8GyAR9b8NR7fc"
+export TAB_NAME="Validated_leads"   # or "Main"
 # ================
 
 # Simple lock to avoid overlapping runs
