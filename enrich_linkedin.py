@@ -37,7 +37,7 @@ SHEET_PROFILES = {
 # Column headers we use/create
 COL_COMPANY        = "name"
 COL_LINKEDIN       = "LinkedIn"  # leave unchanged – these will be auto-added
-COL_STATUS         = "Website Status"  # this is already present
+COL_STATUS         = "LinkedIn status"  # separate from "Website Status"
 COL_LAST_CHECKED   = "Last checked"
 COL_EMP_COUNT      = "LinkedIn employees"
 COL_EMP_LINK       = "LinkedIn people link"
@@ -420,7 +420,7 @@ def build_google_formula(company_cell_a1: str) -> str:
 
 
 # =========== MAIN ===========
-def main():
+def main() -> bool:
     inspector = LinkedInCompanyInspector()
     try:
         gc = auth_client()
@@ -481,7 +481,7 @@ def main():
         values = ws.get_all_values()
         if not values:
             print("No data.")
-            return
+            return False
 
         # Build candidate rows list (wrap from pointer)
         all_rows = list(range(start_row, ws.row_count + 1)) + list(range(2, start_row))
@@ -517,7 +517,7 @@ def main():
         if not work_rows:
             print("Nothing to update.")
             meta_set_next_row(meta, start_row if start_row <= 3 else 2)
-            return
+            return False
 
         updates = []
         def queue_cell(row_num: int, col_num: int, value):
@@ -594,6 +594,7 @@ def main():
         if next_row > len(values):
             next_row = 2
         meta_set_next_row(meta, next_row)
+        return True
     finally:
         inspector.close()
 
@@ -606,12 +607,16 @@ if __name__ == "__main__":
 
     p = argparse.ArgumentParser()
     p.add_argument("--loop", action="store_true", help="keep running forever")
+    p.add_argument("--drain", action="store_true", help="run consecutive batches until no rows remain")
     p.add_argument("--interval", type=int, default=300, help="seconds between passes in --loop mode")
     p.add_argument("--reset-pointer", action="store_true",
                    help="set _meta.next_row back to 2 (start from top)")
     p.add_argument("--reset-hard", action="store_true",
                    help="also clear LinkedIn status/Last checked (does NOT touch company/website)")
     args = p.parse_args()
+
+    if args.loop and args.drain:
+        p.error("--loop and --drain cannot be used together.")
 
     # Run resets if requested
     if args.reset_pointer or args.reset_hard:
@@ -667,7 +672,7 @@ if __name__ == "__main__":
                 print("🧹 Cleared LinkedIn/status/employee columns.")
 
         # if we only wanted to reset and not loop, stop here
-        if not args.loop:
+        if not args.loop and not args.drain:
             sys.exit(0)
 
     # Normal execution
@@ -678,5 +683,17 @@ if __name__ == "__main__":
             except Exception as e:
                 print("Run error:", e)
             time.sleep(max(5, args.interval))
+    elif args.drain:
+        while True:
+            try:
+                progress = main()
+            except Exception as e:
+                print("Run error:", e)
+                progress = False
+            if not progress:
+                print("✅ Drain complete – no remaining leads to process.")
+                break
+            print(f"🔁 Processed a batch of up to {BATCH_SIZE} rows; continuing…")
+            time.sleep(1)
     else:
         main()

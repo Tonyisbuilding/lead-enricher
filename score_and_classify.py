@@ -1,7 +1,4 @@
 import os
-import re
-import requests
-from bs4 import BeautifulSoup
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -12,107 +9,43 @@ SOURCE_SHEET_ID = "1KrKoeun-h6eEzSK6-cc4_MUHriuabg8GyAR9b8NR7fc"
 SOURCE_TAB_NAME = "Ultra_validated"
 
 DEST_SHEET_ID = "1YF8WvLTPu-Raf22rHaaphauj-w-n64CRu83ZeAtHYAc"
+
+# Updated with all your new categories
 DEST_TABS = {
     "Alpha": "Alpha",
     "Beta": "Beta",
     "Gamma": "Gamma",
+    "I-gamma": "I-gamma",
+    "pBin": "pBin",
     "Hydro": "Hydro"
 }
 
-# === KEYWORD CATEGORIES ===
-CATEGORY_1 = [
-    "capital", "asset", "fund", "wealth", "beheer", "vermogensbeheer", "investment",
-    "family office", "hedge", "private equity", "reit", "real estate investment", "venture capital"
-]
-
-CATEGORY_3 = [
-    "hotel", "restaurant", "ngo", "church", "mosque", "temple", "event", "catering", "hostel",
-    "worship", "conference", "festival", "kerk", "moskee", "evenement", "geloof",
-    "nonprofit", "non-profit"
-]
-
-# === SCORING RULES ===
-ALPHA_SCORE_THRESHOLD = 5.0
-BETA_SCORE_THRESHOLD = 4.5
-
-
-# ----------------------------
-#   Extract Website Content
-# ----------------------------
-def extract_visible_text(url):
-    """Fetch visible text content from the website."""
-    try:
-        url = url.strip()
-        if not url.startswith("http"):
-            url = "https://" + url
-
-        response = requests.get(url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept-Language": "en-US,en;q=0.9"
-        })
-
-        if not (200 <= response.status_code < 400):
-            return ""
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # remove junk
-        for tag in soup(["script", "style", "noscript", "header", "footer"]):
-            tag.decompose()
-
-        text = soup.get_text(separator=" ", strip=True).lower()
-        return re.sub(r"\s+", " ", text)
-    except:
-        return ""
-
-
-# ----------------------------
-#   Keyword Category From Content
-# ----------------------------
-def keyword_category_from_content(url):
-    text = extract_visible_text(url)
-    if not text:
-        return 2  # fallback neutral
-
-    if any(kw in text for kw in CATEGORY_3):
-        return 3
-
-    if any(kw in text for kw in CATEGORY_1):
-        return 1
-
-    return 2
-
-
-# ----------------------------
-#   Team Size Scoring
-# ----------------------------
-def score_team_size(team_size):
-    try:
-        n = int(team_size)
-        if n <= 15:
-            return 1.5
-        elif 60 <= n <= 260:
-            return 1.0
-        else:
-            return 0.0
-    except:
-        return 0.0
-
-
-# ----------------------------
-#   Classification Logic
-# ----------------------------
-def classify(score, team_size, linkedin_url):
+def classify(kw_status: str, team_size: int, linkedin_url: str) -> str:
+    """
+    Applies the new classification logic based on keyword status and team size.
+    """
+    # 1. Check for Hydro (broken links) first
     if linkedin_url.startswith("="):
-        return "Hydro"   # formula = no real LinkedIn detected
+        return "Hydro"
+    
+    # 2. Check for pBin (all cat 2)
+    if kw_status == "cat 2":
+        return "pBin"
 
-    if score >= ALPHA_SCORE_THRESHOLD and team_size <= 15:
-        return "Alpha"
-
-    if score >= BETA_SCORE_THRESHOLD and 60 <= team_size <= 260:
-        return "Beta"
-
-    return "Gamma"
+    # 3. Apply the waterfall logic for all "cat 1"
+    if kw_status == "cat 1":
+        if team_size < 15:
+            return "Alpha"
+        elif team_size < 65:
+            return "Beta"
+        elif team_size < 250:
+            return "Gamma"
+        else: # team_size >= 250
+            return "I-gamma"
+            
+    # 4. If not Hydro, cat 1, or cat 2 (e.g., blank, "ERROR"),
+    #    put it in the pBin for review.
+    return "pBin"
 
 
 # === AUTH ===
@@ -120,56 +53,52 @@ scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapi
 creds = Credentials.from_service_account_file(CREDS_PATH, scopes=scopes)
 client = gspread.authorize(creds)
 
-# === READ SOURCE ===
 source_ws = client.open_by_key(SOURCE_SHEET_ID).worksheet(SOURCE_TAB_NAME)
-source_data = source_ws.get_all_records()
 
+# Get all data as a list of lists, skipping the header row (row 1)
+source_data = source_ws.get_all_values()[1:] 
 dest_book = client.open_by_key(DEST_SHEET_ID)
 
+# Updated results dictionary
 results = {
     "Alpha": [],
     "Beta": [],
     "Gamma": [],
+    "I-gamma": [],
+    "pBin": [],
     "Hydro": []
 }
 
-# === PROCESS ROWS ===
+# Your column indexes from the screenshot:
+# A = 0, B = 1, C = 2, D = 3, E = 4
+# *** ASSUMING Keyword Status is in F = 5 ***
 for row in source_data:
+    try:
+        name = str(row[0]).strip()           # Column A
+        website = str(row[1]).strip()       # Column B
+        linkedin = str(row[2]).strip()      # Column C
+        team_raw = row[3]                   # Column D
+        people_link = str(row[4]).strip()   # Column E
+        kw_status = str(row[5]).strip().lower() # !! ASSUMING COLUMN F (index 5) !!
+    except IndexError:
+        # Skips rows that are too short or empty
+        continue
 
-    # clean getter
-    def get_str(key):
-        val = row.get(key, "")
-        return str(val).strip() if val is not None else ""
-
-    name = get_str("name")
-    website = get_str("website")
-    linkedin = get_str("LinkedIn")
-    people_link = get_str("LinkedIn people link")
-
-    team_raw = row.get("LinkedIn employees", "")
+    # Try to convert team size, default to 0 if blank
     try:
         team_size = int(str(team_raw).strip())
     except:
         team_size = 0
 
-    # Skip incomplete rows
-    if not all([name, website, linkedin, people_link, team_size]):
+    # We only skip rows if they are truly empty
+    if not all([name, website, linkedin, people_link]):
         continue
-
-    # Website content keyword category
-    kw_cat = keyword_category_from_content(website)
-
-    if kw_cat == 3:
-        results["Gamma"].append([name, website, linkedin, team_size, people_link])
-        continue
-
-    score = 0
-    if kw_cat == 1:
-        score += 3.5
-
-    score += score_team_size(team_size)
-
-    label = classify(score, team_size, linkedin)
+    
+    # --- NO SCRAPING, NO SCORING ---
+    # Just classify based on the pre-filled data
+    label = classify(kw_status, team_size, linkedin)
+    
+    # Add the row to the correct list for batch updating
     results[label].append([name, website, linkedin, team_size, people_link])
 
 
@@ -177,20 +106,20 @@ for row in source_data:
 for label, rows in results.items():
     if not rows:
         continue
-
     try:
         ws = dest_book.worksheet(DEST_TABS[label])
-    except:
+    except gspread.exceptions.WorksheetNotFound:
+        # Fixed typo: add_worksheet
         ws = dest_book.add_worksheet(title=DEST_TABS[label], rows="3000", cols="10")
         ws.append_row(["name", "website", "LinkedIn", "LinkedIn employees", "LinkedIn people link"])
-
+    
     ws.append_rows(rows, value_input_option="USER_ENTERED")
 
+# === FINAL REPORT ===
 print("======================================================")
 print("  SCORING & CLASSIFICATION COMPLETE")
 print("======================================================")
-print(f" Alpha: {len(results['Alpha'])}")
-print(f" Beta : {len(results['Beta'])}")
-print(f" Gamma: {len(results['Gamma'])}")
-print(f" Hydro: {len(results['Hydro'])}")
+# Print all new categories
+for k in DEST_TABS.keys():
+    print(f" {k:<8}: {len(results[k])}")
 print("======================================================")
