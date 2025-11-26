@@ -7,18 +7,76 @@ from bs4 import BeautifulSoup
 from google.oauth2.service_account import Credentials
 from gspread.utils import rowcol_to_a1
 
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,nl;q=0.8",
+}
+
+
 # Keywords to look for
-KEYWORDS = [
+# English finance keywords
+KEYWORDS_EN = [
     "capital",
     "fund",
+    "funds",
     "asset",
+    "assets",
     "wealth",
     "investment",
+    "investments",
+    "invest in",             # NEW
+    "investment strategy",
     "partners",
     "equity",
+    "interest rate",         # NEW (singular)
     "interest rates",
     "mortgage",
+    "mortgages",
+    "financial expert",      # NEW
+    "financial advisor",
+    "strategy",              # NEW
 ]
+
+# Dutch equivalents / common Dutch finance terms
+KEYWORDS_NL = [
+    "kapitaal",              # capital
+    "fonds",                 # fund
+    "fondsen",
+    "vermogen",              # wealth / assets
+    "vermogensbeheer",       # asset/wealth management
+    "vermogensbeheerder",
+    "belegging",             # investment
+    "beleggingen",
+    "beleggingsfonds",
+    "beleggingsfondsen",
+    "investeer in",          # invest in
+    "investeren in",
+    "beleggingsstrategie",   # investment strategy
+    "partners",              # same in NL
+    "equity",                # many Dutch sites use this English word
+    "hypotheek",             # mortgage
+    "hypotheken",
+    "rente",                 # interest rate
+    "rentetarief",
+    "rentepercentage",
+    "financieel expert",     # financial expert
+    "financiële expert",
+    "financieel adviseur",   # financial advisor
+    "financieel planner",
+    "strategie",             # strategy
+    "financiële planning",
+    "estate planning",
+]
+
+
+# Final keyword list (lowercased, deduplicated)
+KEYWORDS = list(dict.fromkeys(
+    [kw.lower() for kw in (KEYWORDS_EN + KEYWORDS_NL)]
+))
 
 # Sheet config (override via env vars)
 CREDS_PATH = os.path.expanduser(
@@ -114,23 +172,54 @@ def add_dropdown_validation(ws, col_idx):
 
 def keyword_check(url: str):
     try:
-        response = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        soup = BeautifulSoup(response.text, "html.parser")
-        text = soup.get_text(separator=" ", strip=True).lower()
-        word_count = len(text.split())
-        found = [kw for kw in KEYWORDS if kw in text]
+        resp = requests.get(
+            url,
+            timeout=15,
+            headers=HEADERS,
+            allow_redirects=True,
+        )
+        status = resp.status_code
+
+        # Parse whatever HTML we got
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(separator=" ", strip=True)
+        lower = text.lower()
+        words = lower.split()
+        word_count = len(words)
+
+        found = [kw for kw in KEYWORDS if kw in lower]
+
+        blocked_markers = [
+            "access denied",
+            "forbidden",
+            "are you a robot",
+            "unusual traffic",
+            "captcha",
+            "cloudflare",
+            "checking your browser",
+            "enable javascript",
+        ]
+        blocked = any(m in lower for m in blocked_markers)
+
         return {
             "found": found,
             "word_count": word_count,
             "js_rendered": word_count < 100,
+            "http_status": status,
+            "blocked": blocked,
+            "sample": lower[:400],  # just for debugging
         }
+
     except Exception as exc:
         return {
             "found": [],
             "word_count": 0,
             "js_rendered": False,
-            "error": str(exc),
+            "http_status": None,
+            "blocked": True,
+            "error": f"{type(exc).__name__}: {exc}",
         }
+
 
 
 def main():
@@ -165,3 +254,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
